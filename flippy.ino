@@ -1,126 +1,89 @@
-// Flippy - ESP8266 based control for flipclocks
-
-#include <ESP8266WiFi.h>          //ESP8266 Core WiFi Library (you most likely already have this in your sketch)
-
-#include <DNSServer.h>            //Local DNS Server used for redirecting all requests to the configuration portal
-#include <ESP8266WebServer.h>     //Local WebServer used to serve the configuration portal
-#include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager WiFi Configuration Magic
+#include <TimeLib.h>
 #include <Time.h>                 //https://github.com/PaulStoffregen/Time
-#include <Timezone.h>             //https://github.com/JChristensen/Timezone
+//#include <Timezone.h>             //https://github.com/JChristensen/Timezone
+#include <NTPClient.h>            //https://github.com/arduino-libraries/NTPClient
+#include <ESP8266WiFi.h>          //ESP8266 Core WiFi Library
+#include <WiFiUdp.h>              
+//#include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager WiFi Configuration Magic
 
-//Reset Pin
-int rstPin = 5;
-char flippy_hour[2] = "23";
-char flippy_sec[2] = "59";
+bool debug = true;
+#define SerialDebug(text)   Serial.print(text);
+#define SerialDebugln(text) Serial.println(text);
 
-//TimeZone Settings Details https://github.com/JChristensen/Timezone
-TimeChangeRule CEST = {"CEST", Last, Sun, Mar, 2, 120};     //Central European Time (Frankfurt, Paris)
-TimeChangeRule CET = {"CET ", Last, Sun, Oct, 3, 60};       //Central European Time (Frankfurt, Paris)
-Timezone CE(CEST, CET);
+//deze input vervangen we straks door WifiManager
+const char ssid     = "<SSID>";
+const char password = "<PASSWORD>";
+const byte  hours = 23;
+const byte  minutes = 59;
 
-//Pointer To The Time Change Rule, Use to Get The TZ Abbrev
-TimeChangeRule *tcr;
-time_t utc;
+time_t hardware;
 
-//Time server
-static const char ntpServerName[] = "time.google.com";
+WiFiUDP ntpUDP;
 
-WiFiUDP Udp;
-// Local Port to Listen For UDP Packets
-uint16_t localPort;
+NTPClient timeClient(ntpUDP);
 
-void setup() { 
-  pinMode(rstPin, INPUT_PULLUP);
+//Pin configuration for L298N
+int ENA = 4;
+int IN1 = 0;
+int IN2 = 2;
+
+bool polarityState = false;
+
+
+void setup() {
+//  WiFiManager wifiManager;
+//  wifiManager.autoConnect("Flippy");
+
+  Serial.begin(115200);
+  WiFi.begin(ssid, password);
   
-  WiFiManager wifiManager;
-  wifiManager.setAPCallback(configModeCallback);
-  wifiManager.setBreakAfterConfig(true);
-  if (digitalRead(inPin) == LOW) {   
-    delay(5000);
-    wifiManager.resetSettings();
-    ESP.restart();
+  while ( WiFi.status() != WL_CONNECTED ) {
+    delay ( 500 );
+    Serial.print ( "." );
   }
 
-  if (!wifiManager.autoConnect("Flippy")) {
-    delay(3000);
-    ESP.reset();
-    delay(5000);
-  }
-  
-  {
-    while (WiFi.status() != WL_CONNECTED) {
-      delay(500);
-    }
-    // Seed Random With vValues Unique To This Device
-    uint8_t macAddr[6];
-    WiFi.macAddress(macAddr);
-    uint32_t seed1 =
-      (macAddr[5] << 24) | (macAddr[4] << 16) |
-      (macAddr[3] << 8)  | macAddr[2];
-    randomSeed(WiFi.localIP() + seed1 + micros());
-    localPort = random(1024, 65535);
-    Udp.begin(localPort);
-    setSyncProvider(getNtpTime);
-    //Set Sync Intervals
-    setSyncInterval(5 * 60);
-  }
+  timeClient.begin();
+
+  pinMode(ENA, OUTPUT);
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+
+  //haal uren en minuten uit NTP
+  //indien hwtijd later is dan NTP pulse naar 0 en dan naar tijd
+  //indien hwtijd eerder is dan NTP pulse naar tijd
+ 
+  //set hours en minutes in een time_t object en compare dan 2 objecten 
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
+    //if timeclient gets updated, sent pulse (odd or even somehow)
+    timeClient.update();    
+    Serial.println(timeClient.getFormattedTime());
+    delay(1000);
+
+    flip();
 }
 
-void configModeCallback (WiFiManager *myWiFiManager) {
-  
-}
 
-/*-------- NTP code ----------*/
-const int NTP_PACKET_SIZE = 48; // NTP time is in the first 48 bytes of message
-byte packetBuffer[NTP_PACKET_SIZE]; //buffer to hold incoming & outgoing packets
-time_t getNtpTime()
-{
-  IPAddress timeServerIP; // time.nist.gov NTP server address
-  while (Udp.parsePacket() > 0) ; // discard any previously received packets
-  Serial.print(F("Transmit NTP Request "));
-  //get a random server from the pool
-  WiFi.hostByName(ntpServerName, timeServerIP);
-  Serial.println(timeServerIP);
-  sendNTPpacket(timeServerIP);
-  uint32_t beginWait = millis();
-  while ((millis() - beginWait) < 1500) {
-    int size = Udp.parsePacket();
-    if (size >= NTP_PACKET_SIZE) {
-      Udp.read(packetBuffer, NTP_PACKET_SIZE);  // read packet into the buffer
-      unsigned long secsSince1900;
-      // convert four bytes starting at location 40 to a long integer
-      secsSince1900 =  (unsigned long)packetBuffer[40] << 24;
-      secsSince1900 |= (unsigned long)packetBuffer[41] << 16;
-      secsSince1900 |= (unsigned long)packetBuffer[42] << 8;
-      secsSince1900 |= (unsigned long)packetBuffer[43];
-      return secsSince1900 - 2208988800UL;
-    }
+//polaritystate hierin verwerken
+void pulse(int count){
+  for(int i = 0; i < count; i++){
+    if((i % 2) == 0){
+      digitalWrite(IN1, HIGH); //Polarity state #1
+      digitalWrite(IN2, LOW);
+    }else{   
+      digitalWrite(IN1, LOW); //Polarity state #2
+      digitalWrite(IN2, HIGH);
+    } 
+
+    delay(160); //160ms pulse
+
+    digitalWrite(IN1, LOW);
+    digitalWrite(IN2, LOW);
   }
-  return 0; // return 0 if unable to get the time
 }
-// send an NTP request to the time server at the given address
-void sendNTPpacket(IPAddress &address)
-{
-  // set all bytes in the buffer to 0
-  memset(packetBuffer, 0, NTP_PACKET_SIZE);
-  // Initialize values needed to form NTP request
-  // (see URL above for details on the packets)
-  packetBuffer[0] = 0b11100011;   // LI, Version, Mode
-  packetBuffer[1] = 0;     // Stratum, or type of clock
-  packetBuffer[2] = 6;     // Polling Interval
-  packetBuffer[3] = 0xEC;  // Peer Clock Precision
-  // 8 bytes of zero for Root Delay & Root Dispersion
-  packetBuffer[12]  = 49;
-  packetBuffer[13]  = 0x4E;
-  packetBuffer[14]  = 49;
-  packetBuffer[15]  = 52;
-  // all NTP fields have been given values, now
-  // you can send a packet requesting a timestamp:
-  Udp.beginPacket(address, 123); //NTP requests are to port 123
-  Udp.write(packetBuffer, NTP_PACKET_SIZE);
-  Udp.endPacket();
+
+void flip(){
+  pulse(1);
+  delay(60000);
 }
