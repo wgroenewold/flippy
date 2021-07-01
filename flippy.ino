@@ -6,15 +6,11 @@
 #include <WiFiUdp.h>              
 //#include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager WiFi Configuration Magic
 
-bool debug = true;
-#define SerialDebug(text)   Serial.print(text);
-#define SerialDebugln(text) Serial.println(text);
-
 //deze input vervangen we straks door WifiManager
 const char ssid     = "<SSID>";
 const char password = "<PASSWORD>";
-const byte  hours = 23;
-const byte  minutes = 59;
+const byte  hw_hour = 23; //Hours as shown on the clock
+const byte  hw_minute = 59; //Minutes as shown on the clock
 
 time_t hardware;
 
@@ -27,8 +23,9 @@ int ENA = 4;
 int IN1 = 0;
 int IN2 = 2;
 
-bool polarityState = false;
+int pulsecount = 0;
 
+bool polarityState = false;
 
 void setup() {
 //  WiFiManager wifiManager;
@@ -48,11 +45,23 @@ void setup() {
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
 
-  //haal uren en minuten uit NTP
-  //indien hwtijd later is dan NTP pulse naar 0 en dan naar tijd
-  //indien hwtijd eerder is dan NTP pulse naar tijd
+  unsigned long ntp_epoch;
+  ntp_epoch = timeClient.getEpochTime();
+
+  unsigned long hw_epoch;
+  hw_epoch = TimeToEpoch(year(ntp_epoch), month(ntp_epoch), timeClient.getDay(), hw_hour, hw_minute, 0);
+  
+  if(hw_epoch >= ntp_epoch){
+    //eerst pulsen naar 0, dan naar tijd
+    int pulsecount = MinutesToMidnight(hw_hour, hw_minute);
+  }
+  
+  int pulsecount += (timeClient.getHours() * 60);
+  int pulsecount += (timeClient.getMinutes()); 
  
-  //set hours en minutes in een time_t object en compare dan 2 objecten 
+  pulse(pulsecount);
+
+  //indien pulsecount >= 375 dan moet je het nog een keer syncen, misschien zelfs in een while loopje tot pulsecount < 375 is.
 }
 
 void loop() {
@@ -64,6 +73,22 @@ void loop() {
     flip();
 }
 
+byte MinutesToMidnight(byte hh, byte mm){
+    return (59 - mm) + ((23 - hh)*60) + 1;
+}
+
+unsigned long TimeToEpoch(int YYYY, byte MM, byte DD, byte hh, byte mm, byte ss){
+  tmElements_t tm;
+  
+  tm.Year = YYYY - 1970; // years since 1970, so deduct 1970
+  tm.Month = MM  - 1;      // months start from 0, so deduct 1
+  tm.Day = DD;
+  tm.Hour = hh;
+  tm.Minute = mm;
+  tm.Second = ss;
+  
+  return (unsigned long) makeTime(tm);
+}
 
 //polaritystate hierin verwerken
 void pulse(int count){
