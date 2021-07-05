@@ -1,6 +1,6 @@
 #include <TimeLib.h>
 #include <Time.h>                 //https://github.com/PaulStoffregen/Time
-//#include <Timezone.h>             //https://github.com/JChristensen/Timezone
+#include <Timezone.h>             //https://github.com/JChristensen/Timezone
 #include <NTPClient.h>            //https://github.com/arduino-libraries/NTPClient
 #include <ESP8266WiFi.h>          //ESP8266 Core WiFi Library
 #include <WiFiUdp.h>              
@@ -37,7 +37,7 @@ void setup() {
   while ( WiFi.status() != WL_CONNECTED ) {
     delay ( 500 );
     Serial.print ( "." );
-  }
+  }get
 
   timeClient.begin();
 
@@ -45,6 +45,15 @@ void setup() {
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
 
+  int pulsecount;
+
+  pulsecount = SyncHardware();
+  if(pulsecount >= 375){
+    SyncHardware();  
+  }
+}
+
+int SyncHardware(){
   unsigned long ntp_epoch;
   ntp_epoch = timeClient.getEpochTime();
 
@@ -55,16 +64,29 @@ void setup() {
     //eerst pulsen naar 0, dan naar tijd
     int pulsecount = MinutesToMidnight(hw_hour, hw_minute);
   }
+
+  time_t corrected_ntp_time;
+  TimeChangeRule *tcr;
   
-  int pulsecount += (timeClient.getHours() * 60);
-  int pulsecount += (timeClient.getMinutes()); 
+  TimeChangeRule nlDST = {"DST", Last, Sun, Mar, 1, +120};  //UTC + 2 hours
+  TimeChangeRule nlSTD = {"STD", Last, Sun, Oct, 1, +60};   //UTC + 1 hour
+  Timezone nlDST(nlDST, nlSTD);
+  
+  corrected_ntp_time = nlDST.toLocal(ntp_epoch, &tcr); //corrected_ntp_time is NTP time with TZ + DST correction
+  
+  int pulsecount += (hour(corrected_ntp_time) * 60);
+  int pulsecount += (minute(corrected_ntp_time); 
  
   pulse(pulsecount);
 
-  //indien pulsecount >= 375 dan moet je het nog een keer syncen, misschien zelfs in een while loopje tot pulsecount < 375 is.
+  return pulsecount
 }
 
 void loop() {
+    //als de timeclient achterloopt dan moet je een tijdje stilstaan. Ook bij DST correctie.
+    //timechangerules moeten hier ook nog wat in    
+
+  
     //if timeclient gets updated, sent pulse (odd or even somehow)
     timeClient.update();    
     Serial.println(timeClient.getFormattedTime());
