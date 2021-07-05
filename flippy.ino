@@ -4,40 +4,51 @@
 #include <NTPClient.h>            //https://github.com/arduino-libraries/NTPClient
 #include <ESP8266WiFi.h>          //ESP8266 Core WiFi Library
 #include <WiFiUdp.h>              
-//#include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager WiFi Configuration Magic
+#include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager WiFi Configuration Magic
 
-//deze input vervangen we straks door WifiManager
-const char ssid     = "<SSID>";
-const char password = "<PASSWORD>";
-const byte  hw_hour = 23; //Hours as shown on the clock
-const byte  hw_minute = 59; //Minutes as shown on the clock
+//const char ssid     = "<SSID>";
+//const char password = "<PASSWORD>";
+//const byte  hw_hour = 23; //Hours as shown on the clock
+//const byte  hw_minute = 59; //Minutes as shown on the clock
 
-time_t hardware;
+int pulsecount = 0;
+bool polarityState = false;
 
-WiFiUDP ntpUDP;
-
-NTPClient timeClient(ntpUDP);
+#define RST_PIN 0;
 
 //Pin configuration for L298N
 int ENA = 4;
 int IN1 = 0;
 int IN2 = 2;
 
-int pulsecount = 0;
+WiFiManager wm;
+WiFiManagerParameter hours_field;
+WiFiManagerParameter minutes_field;
 
-bool polarityState = false;
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP);
 
 void setup() {
-//  WiFiManager wifiManager;
-//  wifiManager.autoConnect("Flippy");
+  WiFi.mode(WIFI_STA);
 
   Serial.begin(115200);
-  WiFi.begin(ssid, password);
+  //WiFi.begin(ssid, password);
+  Serial.setDebugOutput(true);  
+  delay(3000);
+  pinMode(RST_PIN, INPUT);
+
+  new (&hours_field) WiFiManagerParameter("hours_id", "Hours", "", 2,"placeholder=\"23\"");
+  new (&minutes_field) WiFiManagerParameter("minutes_id", "Minutes", "", 2,"placeholder=\"59\"");
+
+  wm.addParameter(&custom_field1);
+  wm.addParameter(&custom_field2);
+  wm.setSaveParamsCallback(saveParamCallback);
+
   
-  while ( WiFi.status() != WL_CONNECTED ) {
-    delay ( 500 );
-    Serial.print ( "." );
-  }get
+//  while ( WiFi.status() != WL_CONNECTED ) {
+//    delay ( 500 );
+//    Serial.print ( "." );
+//  }
 
   timeClient.begin();
 
@@ -45,12 +56,20 @@ void setup() {
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
 
-  int pulsecount;
+  bool res;
+  res = wm.autoConnect("fl1ppy");
 
-  pulsecount = SyncHardware();
-  if(pulsecount >= 375){
-    SyncHardware();  
-  }
+  if(getParam("hours_id") && getParam("minutes_id")){
+    byte hw_hour = getParam("hours_id").toInt();
+    byte hw_minute = getParam("minutes_id").toInt();
+  
+    int pulsecount;
+
+    pulsecount = SyncHardware();
+    if(pulsecount >= 375){
+      SyncHardware();  
+    }     
+  }  
 }
 
 int SyncHardware(){
@@ -86,6 +105,8 @@ void loop() {
     //als de timeclient achterloopt dan moet je een tijdje stilstaan. Ook bij DST correctie.
     //timechangerules moeten hier ook nog wat in    
     //if timeclient gets updated, sent pulse (odd or even somehow)
+
+    checkButton();
 
     timeClient.update();    
     Serial.println(timeClient.getFormattedTime());
@@ -133,4 +154,53 @@ void pulse(int count){
 void flip(){
   pulse(1);
   delay(60000);
+}
+
+//Short press = start portal (50ms)
+//Long press = reset config (3s)
+
+//deze functie nog even herschrijven want die blocked
+void checkButton(){
+  // check for button press
+  if ( digitalRead(TRIGGER_PIN) == LOW ) {
+    // poor mans debounce/press-hold, code not ideal for production
+    delay(50);
+    if( digitalRead(TRIGGER_PIN) == LOW ){
+      Serial.println("Button Pressed");
+      // still holding button for 3000 ms, reset settings, code not ideaa for production
+      delay(3000); // reset delay hold
+      if( digitalRead(TRIGGER_PIN) == LOW ){
+        Serial.println("Button Held");
+        Serial.println("Erasing Config, restarting");
+        wm.resetSettings();
+        ESP.restart();
+      }
+      
+      // start portal w delay
+      Serial.println("Starting config portal");
+      wm.setConfigPortalTimeout(120);
+      
+      if (!wm.startConfigPortal("fl1ppy")) {
+        Serial.println("failed to connect or hit timeout");
+        delay(3000);
+        // ESP.restart();
+      } else {
+        //if you get here you have connected to the WiFi
+        Serial.println("connected...yeey :)");
+      }
+    }
+  }
+}
+
+String getParam(String name){  
+  String value;
+  if(wm.server->hasArg(name)) {
+    value = wm.server->arg(name);
+  }
+  return value;
+}
+
+void saveParamCallback(){ 
+  Serial.println("PARAM hours = " + getParam("hours_id"));
+  Serial.println("PARAM minutes = " + getParam("minutes_id"));
 }
