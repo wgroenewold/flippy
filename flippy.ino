@@ -85,9 +85,8 @@ int SyncHardware(){
 void loop() {
     //als de timeclient achterloopt dan moet je een tijdje stilstaan. Ook bij DST correctie.
     //timechangerules moeten hier ook nog wat in    
-
-  
     //if timeclient gets updated, sent pulse (odd or even somehow)
+
     timeClient.update();    
     Serial.println(timeClient.getFormattedTime());
     delay(1000);
@@ -112,10 +111,9 @@ unsigned long TimeToEpoch(int YYYY, byte MM, byte DD, byte hh, byte mm, byte ss)
   return (unsigned long) makeTime(tm);
 }
 
-//polaritystate hierin verwerken
 void pulse(int count){
   for(int i = 0; i < count; i++){
-    if((i % 2) == 0){
+    if(polarityState == false){
       digitalWrite(IN1, HIGH); //Polarity state #1
       digitalWrite(IN2, LOW);
     }else{   
@@ -127,6 +125,8 @@ void pulse(int count){
 
     digitalWrite(IN1, LOW);
     digitalWrite(IN2, LOW);
+
+    polarityState = !polarityState;
   }
 }
 
